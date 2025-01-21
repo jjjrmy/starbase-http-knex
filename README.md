@@ -1,62 +1,39 @@
-# cloudflare-d1-http-knex
+# starbase-http-knex
 
-[![License: MIT](https://img.shields.io/npm/l/cloudflare-d1-http-knex.svg)](https://github.com/zfben/cloudflare-d1-http-knex/blob/main/LICENSE)
-[![NPM Version](https://img.shields.io/npm/v/cloudflare-d1-http-knex.svg)](https://www.npmjs.com/package/cloudflare-d1-http-knex)
-[![Coverage Status](https://img.shields.io/codecov/c/github/zfben/cloudflare-d1-http-knex.svg)](https://app.codecov.io/gh/zfben/cloudflare-d1-http-knex)
-[![Testing Status](https://github.com/zfben/cloudflare-d1-http-knex/actions/workflows/test.yml/badge.svg)](https://github.com/zfben/cloudflare-d1-http-knex/actions/workflows/test.yml)
+[![License: MIT](https://img.shields.io/npm/l/starbase-http-knex.svg)](https://github.com/jjjrmy/starbase-http-knex/blob/main/LICENSE)
+[![NPM Version](https://img.shields.io/npm/v/starbase-http-knex.svg)](https://www.npmjs.com/package/starbase-http-knex)
 
-An npm package that query [Cloudflare's D1](https://developers.cloudflare.com/d1/) through [Query D1 Database API](https://developers.cloudflare.com/api/operations/cloudflare-d1-query-database-query) and [Knex](https://knexjs.org/).
+An npm package that queries Starbase databases through HTTP endpoints using [Knex](https://knexjs.org/).
 
 ## Installation
 
 ```bash
-npm install cloudflare-d1-http-knex
+npm install starbase-http-knex
 
 # or
-bun add cloudflare-d1-http-knex
+bun add starbase-http-knex
 ```
 
 ## Usage
 
 ```ts
-import { createConnection } from 'cloudflare-d1-http-knex';
+import { createConnection } from "starbase-http-knex";
 
 // The connection function returns a Knex instance
 const connection = createConnection({
-  account_id: 'account_id',
-  database_id: 'database_id',
-  key: 'key',
+  accountSubdomain: "your-identifier",
+  workerSubdomain: "starbasedb", // optional, defaults to "starbasedb"
+  authToken: "your-token",
 });
 
-const query = await connection('table_name').select('*');
-```
+// Basic query
+const query = await connection("table_name").select("*");
 
-## Mocking
-
-1. Install `better-sqlite3`: `npm install -D better-sqlite3`.
-2. Using in case:
-```ts
-import { createConnection } from 'cloudflare-d1-http-knex'
-import { mockedFetch } from 'cloudflare-d1-http-knex/mock'
-
-const db = createConnection({
-  account_id: 'xxxx',
-  database_id: 'xxxx',
-  key: 'xxxx',
-  mockedFetch, // Using mocked fetch, it won't connect to real D1 database.
-})
-
-await db.raw('SELECT 1+1')
-```
-
-### Usage mockedFetch as Global in Jest
-
-You should add below codes to your jest setup files.
-
-```ts
-import { mockedFetch } from 'cloudflare-d1-http-knex/mock'
-
-global.fetch = jest.fn(mockedFetch)
+// Transaction example
+await connection.transaction(async (trx) => {
+  await trx("users").insert({ user_id: 1 });
+  const user = await trx("users").where({ user_id: 1 }).first();
+});
 ```
 
 ## Changelog

@@ -1,43 +1,36 @@
 import K, { type Knex } from 'knex'
 import Client from 'knex/lib/dialects/sqlite3/index.js'
-import type { mockedFetch } from './mock'
 
-export type CloudflareD1HttpClientConfigConnection = {
-  /** Cloudflare's account id */
-  account_id: string
-  /** D1's database id */
-  database_id: string
-  /** Cloudflare's api key, from https://dash.cloudflare.com/profile/api-tokens */
-  key: string
-  /** Mock fetch function for testing */
-  mockedFetch?: typeof mockedFetch
+export type StarbaseHttpClientConfigConnection = {
+  /** Your Starbase account subdomain */
+  accountSubdomain: string
+  /** Worker subdomain, defaults to "starbasedb" */
+  workerSubdomain?: string
+  /** Authorization token */
+  authToken: string
 } & Knex.StaticConnectionConfig
 
-export type CloudflareD1HttpClientConfig = Knex.Config & {
-  connection: CloudflareD1HttpClientConfigConnection
+export type StarbaseHttpClientConfig = Knex.Config & {
+  connection: StarbaseHttpClientConfigConnection
 }
 
-export class CloudflareD1HttpClient extends (Client as unknown as typeof Knex.Client) {
-  declare readonly config: CloudflareD1HttpClientConfig
+export class StarbaseHttpClient extends (Client as unknown as typeof Knex.Client) {
+  declare readonly config: StarbaseHttpClientConfig
+  private transactionQueries: { sql: string; params: any[] }[] = []
+  private inTransaction = false
 
-  constructor(config: CloudflareD1HttpClientConfig) {
+  constructor(config: StarbaseHttpClientConfig) {
     ;(config.connection as any).filename = ':memory:'
     config.useNullAsDefault = false
 
     super(config)
 
-    if (!config.connection.mockedFetch) {
-      if (!config.connection?.account_id) {
-        throw Error('Missing required account_id')
-      }
+    if (!config.connection?.accountSubdomain) {
+      throw Error('Missing required accountSubdomain')
+    }
 
-      if (!config.connection?.database_id) {
-        throw Error('Missing required database_id')
-      }
-
-      if (!config.connection?.key) {
-        throw Error('Missing required key')
-      }
+    if (!config.connection?.authToken) {
+      throw Error('Missing required authToken')
     }
 
     this.config = config
@@ -54,73 +47,88 @@ export class CloudflareD1HttpClient extends (Client as unknown as typeof Knex.Cl
   async _query(_, obj) {
     if (!obj.sql) return Promise.reject(Error('The query is empty'))
 
-    if (['BEGIN;', 'COMMIT;', 'ROLLBACK;'].includes(obj.sql)) {
-      console.warn(
-        "[WARN] D1 doesn't support transactions, see https://blog.cloudflare.com/whats-new-with-d1/"
-      )
+    const workerSubdomain = this.config.connection.workerSubdomain || 'starbasedb'
+    const baseUrl = `https://${workerSubdomain}.${this.config.connection.accountSubdomain}.workers.dev/query`
+
+    // Handle transaction statements
+    if (obj.sql === 'BEGIN;') {
+      this.inTransaction = true
+      this.transactionQueries = []
       return Promise.resolve()
     }
 
-    if (this.config.connection.mockedFetch)
-      return this.config.connection
-        .mockedFetch(
-          `https://api.cloudflare.com/client/v4/accounts/${this.config.connection.account_id}/d1/database/${this.config.connection.database_id}/query`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({
-              sql: obj.sql,
-              params: obj.bindings,
-            }),
-          }
-        )
-        .then(res => this._processResponse(res, obj))
+    if (obj.sql === 'COMMIT;') {
+      this.inTransaction = false
+      // Send all collected queries as a transaction
+      const queries = this.transactionQueries
+      this.transactionQueries = []
 
-    return fetch(
-      `https://api.cloudflare.com/client/v4/accounts/${this.config.connection.account_id}/d1/database/${this.config.connection.database_id}/query`,
-      {
+      return fetch(baseUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${this.config.connection.key}`,
+          Authorization: `Bearer ${this.config.connection.authToken}`,
         },
         body: JSON.stringify({
-          sql: obj.sql,
-          params: obj.bindings,
+          transaction: queries
         }),
-      }
-    ).then(res => this._processResponse(res, obj))
+      }).then(res => this._processResponse(res, obj))
+    }
+
+    if (obj.sql === 'ROLLBACK;') {
+      this.inTransaction = false
+      this.transactionQueries = []
+      return Promise.resolve()
+    }
+
+    // If we're in a transaction, collect the query
+    if (this.inTransaction) {
+      this.transactionQueries.push({
+        sql: obj.sql,
+        params: obj.bindings || []
+      })
+      return Promise.resolve()
+    }
+
+    // Regular single query
+    return fetch(baseUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${this.config.connection.authToken}`,
+      },
+      body: JSON.stringify({
+        sql: obj.sql,
+        params: obj.bindings || [],
+      }),
+    }).then(res => this._processResponse(res, obj))
   }
 
   async _processResponse(res, obj) {
     return res.json().then(body => {
       if (body.success) {
-        if (obj.output) return obj.output.call(null, body.result[0].results)
+        if (obj.output) return obj.output.call(null, body.result)
 
         switch (obj.method) {
           case 'first':
-            return body.result[0].results[0]
+            return body.result[0]
           case 'insert':
             if (obj.returning) {
-              return body.result[0].results
+              return body.result
             }
-
-            return [body.result[0].meta.changes]
+            return [body.meta.changes]
           case 'update':
             if (obj.returning) {
-              return body.result[0].results
+              return body.result
             }
-
-            return body.result[0].meta.changes
+            return body.meta.changes
           case 'del':
           case 'counter':
-            return body.result[0].meta.changes
+            return body.meta.changes
           case 'pluck':
-            return body.result[0].results.map(row => row[obj.pluck])
+            return body.result.map(row => row[obj.pluck])
           default:
-            return body.result[0].results
+            return body.result
         }
       }
 
@@ -139,19 +147,18 @@ export class CloudflareD1HttpClient extends (Client as unknown as typeof Knex.Cl
  * @example
  * ```ts
  * const db = createConnection({
- *   account_id: 'xxxx',
- *   database_id: 'xxxx',
- *   key: 'xxxx',
+ *   accountSubdomain: 'your-identifier',
+ *   authToken: 'your-token',
  * })
  *
  * await db('users').first()
  * ```
  */
 export function createConnection(
-  connection: CloudflareD1HttpClientConfigConnection
+  connection: StarbaseHttpClientConfigConnection
 ) {
   return K({
-    client: CloudflareD1HttpClient,
+    client: StarbaseHttpClient,
     connection,
   })
 }
