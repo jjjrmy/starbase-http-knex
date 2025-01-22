@@ -1,10 +1,10 @@
-import { CloudflareD1HttpClient } from './client'
+import { StarbaseHttpClient } from './client'
 
-export default CloudflareD1HttpClient
+export default StarbaseHttpClient
 
 export {
   createConnection,
-  CloudflareD1HttpClient,
-  CloudflareD1HttpClientConfig,
-  CloudflareD1HttpClientConfigConnection,
+  StarbaseHttpClient,
+  StarbaseHttpClientConfig,
+  StarbaseHttpClientConfigConnection,
 } from './client'
