@@ -2,7 +2,7 @@
   "name": "starbase-http-knex",
   "description": "An npm package that queries Starbase databases through HTTP endpoints using Knex",
   "keywords": ["starbase", "knex", "api", "sql"],
-  "version": "1.0.0",
+  "version": "1.1.0",
   "license": "MIT",
   "homepage": "https://github.com/jjjrmy/starbase-http-knex",
   "repository": {

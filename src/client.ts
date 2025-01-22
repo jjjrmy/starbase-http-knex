@@ -106,25 +106,12 @@ export class StarbaseHttpClient extends (Client as unknown as typeof Knex.Client
 
   async _processResponse(res, obj) {
     return res.json().then(body => {
-      if (body.success) {
+      if (res.ok) {
         if (obj.output) return obj.output.call(null, body.result)
 
         switch (obj.method) {
           case 'first':
             return body.result[0]
-          case 'insert':
-            if (obj.returning) {
-              return body.result
-            }
-            return [body.meta.changes]
-          case 'update':
-            if (obj.returning) {
-              return body.result
-            }
-            return body.meta.changes
-          case 'del':
-          case 'counter':
-            return body.meta.changes
           case 'pluck':
             return body.result.map(row => row[obj.pluck])
           default:
@@ -132,7 +119,7 @@ export class StarbaseHttpClient extends (Client as unknown as typeof Knex.Client
         }
       }
 
-      throw Error(body.errors[0].message)
+      throw Error(body.error)
     })
   }
 
